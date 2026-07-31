@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>JSAN GeoDiscover™ — Executive Customer Sample</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="loginView" class="login-page">
+    <section class="login-visual">
+      <div class="brand brand-inverse"><div class="brand-mark">J</div><div><strong>JSAN GeoDiscover™</strong><small>Incremental POI Intelligence</small></div></div>
+      <div class="login-story">
+        <p class="eyebrow inverse">EXECUTIVE CUSTOMER SAMPLE</p>
+        <h1>A simple proof of what JSAN can discover beyond a baseline map.</h1>
+        <p>One focused story: compare Grab and Google, identify evidence-backed candidates, prioritise a strong sample, and explain what is required before customer release.</p>
+        <div class="login-proof">
+          <div><strong>400</strong><span>Grab POIs</span></div>
+          <div><strong>562</strong><span>Google POIs</span></div>
+          <div><strong>39</strong><span>Priority candidates</span></div>
+        </div>
+      </div>
+      <div class="login-footnote">Denpasar CORE · Demonstration evidence · No incomplete candidate is represented as customer-ready.</div>
+    </section>
+    <section class="login-card-wrap">
+      <form id="loginForm" class="login-card">
+        <p class="eyebrow">SECURE JSAN WORKSPACE</p>
+        <h2>Open the customer demonstration</h2>
+        <p class="muted">Use the credentials configured in <code>backend/.env</code>.</p>
+        <div id="loginError"></div>
+        <label>Email<input id="email" type="email" autocomplete="username" required placeholder="admin@jsanconsulting.com"></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+        <button class="button primary full">Continue</button>
+        <p class="security-note">The package contains no live Google, AWS or social-platform credentials.</p>
+      </form>
+    </section>
+  </div>
+
+  <div id="appView" class="app-layout hidden">
+    <aside class="sidebar">
+      <div class="brand brand-inverse"><div class="brand-mark">J</div><div><strong>JSAN GeoDiscover™</strong><small>Executive Customer Sample</small></div></div>
+      <div class="scope-card"><span class="scope-dot"></span><div><strong>Denpasar CORE</strong><small>Current customer scope</small></div></div>
+      <p class="nav-label">CURRENT DEMONSTRATION</p>
+      <nav id="nav">
+        <a href="#overview" data-view="overview"><i>01</i><span>Executive Overview</span></a>
+        <a href="#comparison" data-view="comparison"><i>02</i><span>Comparison Proof</span></a>
+        <a href="#sample" data-view="sample"><i>03</i><span>Priority Sample</span></a>
+        <a href="#map" data-view="map"><i>04</i><span>Coverage Map</span></a>
+        <a href="#cost" data-view="cost"><i>05</i><span>Cost & Scale</span></a>
+        <a href="#pack" data-view="pack"><i>06</i><span>Customer Pack</span></a>
+        <a href="#validation" data-view="validation"><i>07</i><span>Validation Layer</span></a>
+        <a href="#scraping" data-view="scraping"><i>08</i><span>Cities &amp; Scraping</span></a>
+        <a href="#scrape" data-view="scrape"><i>09</i><span>Scrape Data</span></a>
+      </nav>
+      <p class="nav-label future-label">AFTER CUSTOMER ALIGNMENT</p>
+      <nav><a href="#future" data-view="future"><i>→</i><span>Future Scale</span></a></nav>
+      <div class="sidebar-bottom"><button id="logout" class="signout">Sign out</button></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><p class="eyebrow">L’ORÉAL THROUGH WEB GEO SERVICES</p><h1 id="pageTitle">Executive Overview</h1></div>
+        <div class="top-actions">
+          <div class="status-pill"><span></span><div><strong>CUSTOMER-SAFE DEMO</strong><small>Current scope only</small></div></div>
+          <div class="user"><strong id="userName">User</strong><span id="userRole">Role</span></div>
+        </div>
+      </header>
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root"></div>
+  <script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

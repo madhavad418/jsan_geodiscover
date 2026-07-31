@@ -1,0 +1,13 @@
+.env
+backend/.env
+*.db
+*.sqlite
+*.sqlite3
+# The bundled discovery-engine sample data must ship; the Dockerfile copies it.
+!backend/discovery_engine_seed.db
+__pycache__/
+.pytest_cache/
+.venv/
+evidence_storage/
+*.pyc
+*.log
