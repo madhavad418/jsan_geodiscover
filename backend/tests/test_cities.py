@@ -1,6 +1,9 @@
 """Each city's workbook is appended to the shared tables without colliding."""
 
+import io
+
 import pytest
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -88,3 +91,65 @@ def test_rows_without_a_place_id_dedupe_on_name_and_address(db):
     db.commit()
     assert second["added"] == 0
     assert len(list(db.scalars(select(ValidationRecord)))) == 1
+
+
+def test_city_validation_export_contains_current_database_values(client, headers):
+    project_response = client.post("/api/v1/projects", headers=headers, json={
+        "name": "City export test",
+        "customer": "Demo Customer",
+        "country": "Indonesia",
+        "cities": ["Ubud"],
+        "categories": ["Hair Salon"],
+        "target_volume": 10,
+        "confidence_threshold": 70,
+        "gold_threshold": 85,
+        "require_qa_for_release": True,
+    })
+    assert project_response.status_code == 201, project_response.text
+    project_id = project_response.json()["id"]
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append([
+        "Provider", "Provider Place ID", "Business Name", "Categories", "Address",
+        "City", "Province", "Latitude", "Longitude", "Evidence Method", "Google maps",
+    ])
+    sheet.append(["GRAB", "U1", "Milk Salon", "hair salon", "Jl. Raya Ubud", "Ubud", "Bali", -8.5, 115.2, "PROBE", None])
+    upload = io.BytesIO()
+    workbook.save(upload)
+
+    uploaded = client.post(
+        f"/api/v1/cities/{project_id}/upload",
+        headers=headers,
+        data={"city": "Ubud", "region": "Bali", "country": "Indonesia"},
+        files={"file": ("ubud.xlsx", upload.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    city_id = uploaded.json()["city"]["id"]
+
+    records = client.get(
+        f"/api/v1/validation/{project_id}/records?city_id={city_id}", headers=headers
+    ).json()["records"]
+    saved = client.put(
+        f"/api/v1/validation/records/{records[0]['id']}",
+        headers=headers,
+        json={
+            "google_maps": "YES",
+            "google_maps_link": "https://maps.google.com/milk",
+            "validation_notes": "Checked by analyst",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    exported = client.get(
+        f"/api/v1/validation/{project_id}/cities/{city_id}/xlsx", headers=headers
+    )
+    assert exported.status_code == 200, exported.text
+    assert "GeoDiscover_Ubud_Validation_" in exported.headers["content-disposition"]
+    result = load_workbook(io.BytesIO(exported.content), data_only=True)
+    rows = list(result["Validation Data"].iter_rows(values_only=True))
+    values = dict(zip(rows[0], rows[1]))
+    assert values["Business Name"] == "Milk Salon"
+    assert values["Google Maps"] == "YES"
+    assert values["Google Maps Link"] == "https://maps.google.com/milk"
+    assert values["Validator notes"] == "Checked by analyst"

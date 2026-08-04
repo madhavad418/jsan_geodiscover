@@ -98,6 +98,15 @@ window.downloadPack=async function(){try{
   a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);toast(`${name} downloaded`)
 }catch(e){toast(e.message)}};
 
+window.downloadCityValidation=async function(cityId){try{
+  const city=(state.cities||[]).find(c=>c.id===cityId)||(SCR.cities||[]).find(c=>c.id===cityId);
+  const res=await api(`/validation/${state.project.id}/cities/${cityId}/xlsx`,{},true);
+  const cd=res.headers.get('content-disposition')||'';
+  const name=(cd.match(/filename="?([^";]+)"?/)||[])[1]||`GeoDiscover_${city&&city.name?city.name:'City'}_Validation.xlsx`;
+  const blob=await res.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);toast(`${name} downloaded`)
+}catch(e){toast(e.message)}};
+
 async function future(){const [s,d]=await Promise.all([getSummary(),api(`/executive/${state.project.id}/future-modules`)]);const list=x=>`<ul>${x.map(v=>`<li>${esc(v)}</li>`).join('')}</ul>`;$('#content').innerHTML=`${pageHead('Future Scale','A clear separation between what is demonstrated now and what is activated after customer alignment.')}${demoStrip(s)}<div class="roadmap"><div class="roadmap-stage current"><p class="eyebrow">NOW</p><h3>Customer capability demonstration</h3>${list(d.current_demo)}</div><div class="roadmap-stage next"><p class="eyebrow">NEXT</p><h3>Strong 10/25 validation sprint</h3>${list(d.phase_2_after_customer_alignment)}</div><div class="roadmap-stage future"><p class="eyebrow">LATER</p><h3>Production and national scale</h3>${list(d.future_scale)}</div></div><div class="panel" style="margin-top:14px"><h3>Recommended sequencing</h3><p>Do not add more customer-facing modules before the Strong 10/25 sample is approved. First prove a small number of records deeply; then scale geography, sources and automation.</p></div>`}
 
 /* ---------- Validation Layer ---------- */
@@ -150,7 +159,7 @@ function renderValidation(){
   $('#content').innerHTML=`
 ${scrape
   ?pageHead('Scrape Data',`Processed results for ${VL.file||'the uploaded workbook'}. Columns the providers could prove are filled in; everything else is left empty with the reason recorded. Edit and save exactly as in the validation layer.`,`<a class="button outline" href="#scraping">Back to jobs</a>`)
-  :pageHead('Validation Layer','Every city’s workbook in one editable layer. Pick a city to work through it on its own, or stay on All cities to see the whole programme. Mark each directory presence Yes or No, attach the supporting link, and save the row in place.',`<a class="button outline" href="#scraping">Manage cities</a>`)}
+  :pageHead('Validation Layer','Every city’s workbook in one editable layer. Pick a city to work through it on its own, or stay on All cities to see the whole programme. Mark each directory presence Yes or No, attach the supporting link, and save the row in place.',`${VL.cityId?`<button class="button primary" onclick="downloadCityValidation(${VL.cityId})">Download updated XLSX</button>`:''}<a class="button outline" href="#scraping">Manage cities</a>`)}
 ${scrape
   ?`<div class="demo-strip"><div><strong>${esc((j&&j.city)||VL.file||'—')}</strong><span>Job #${j?j.id:'—'} · ${VL.total} records · ${j?j.fields_filled:0} column values filled across ${j?j.records_with_findings:0} records</span></div>${tag(j?j.status:'—',j&&j.status==='COMPLETED'?'green':'amber')}</div>`
   :cityStrip()}
@@ -329,6 +338,7 @@ ${SCR.cities.map(c=>{const done=c.summary.COMPLETED||0,prog=c.summary.IN_PROGRES
   <td><small class="muted">${esc((c.source_files||[]).join(', ')||'—')}</small></td>
   <td><div class="scr-actions">
     <button class="button small outline" onclick="scrOpenCity(${c.id})">Validate</button>
+    <button class="button small outline" onclick="downloadCityValidation(${c.id})">Download XLSX</button>
     <button class="button small primary" onclick="scrRunCity(${c.id})" ${running(c.id)?'disabled':''}>${running(c.id)?'Scraping…':'Scrape city'}</button>
     <button class="button small outline" onclick="scrDeleteCity(${c.id},'${esc(c.name)}')">Delete</button>
   </div></td></tr>`}).join('')}
