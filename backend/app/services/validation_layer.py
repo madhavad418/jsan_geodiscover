@@ -606,14 +606,12 @@ def replace_rows(
     file_name: str,
     columns: Columns | None = None,
 ) -> dict[str, Any]:
-    """Append and refresh a city's validation rows from one workbook.
+    """Make a city's validation rows match one workbook exactly.
 
-    This is not a destructive replace: records already in the database that
-    are absent from the current workbook are left untouched, so a workbook
-    change (or a bundled-file rename) never deletes data. Rows present in the
-    workbook are added when new or refreshed when they already exist.
-    Discovery columns the workbook leaves unstated keep the value already
-    held, so a placeholder in the source does not erase how a place was
+    The workbook is the record of what a city contains, so a business it no
+    longer lists is dropped rather than left behind as a row no later revision
+    can correct. Discovery columns the workbook leaves unstated keep the value
+    already held, so a placeholder in the source does not erase how a place was
     found.
     """
     existing = list(
@@ -666,15 +664,18 @@ def replace_rows(
             record.evidence_method = "NOT_PROBED"
         record.validation_status = compute_status(record)
 
-    # Note: records not present in the workbook are intentionally left
-    # untouched here. replace_rows() no longer deletes anything -- it only
-    # appends new rows and refreshes existing ones.
+    removed = 0
+    for key, record in by_key.items():
+        if key not in seen:
+            db.delete(record)
+            removed += 1
 
     city.source_files = [file_name]
     db.flush()
     return {
         "added": added,
         "refreshed": refreshed,
+        "removed": removed,
         "skipped": skipped,
         "kept_evidence": kept_evidence,
     }

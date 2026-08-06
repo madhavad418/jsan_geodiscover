@@ -49,7 +49,8 @@ def bootstrap():
                 )
                 print(
                     f"Validation layer for {result['city']} from {result['workbook']}{superseded}: "
-                    f"{result['added']} new, {result['refreshed']} refreshed."
+                    f"{result['added']} new, {result['refreshed']} refreshed, "
+                    f"{result['removed']} removed."
                 )
             if not loaded_validation:
                 print("Validation layer: no workbook found in backend/misseddata.")
