@@ -1,10 +1,18 @@
 """Validation layer: workbook import and the field specification shared by the API and UI.
 
-The misseddata workbook carries two row shapes. Rows that were probed follow the
-header exactly; rows that were never probed in the opposite provider are shifted
-one column left from "Categories" onward (address sits under Categories, the
-coordinates under City/Province, and the evidence reason under Latitude).
-Both shapes are normalised here so the validation layer sees one clean schema.
+The misseddata workbooks are hand-finished by validators, so no two are laid out
+identically. Three deviations are normalised here so the validation layer always
+sees one clean schema:
+
+* Rows that were never probed in the opposite provider can be shifted one column
+  left from "Categories" onward (address under Categories, the coordinates under
+  City/Province, the evidence reason under Latitude).
+* Some exports carry a blank column in front of the evidence block, shifting
+  Evidence Method through Evidence Reason one column right and pushing
+  "Found By Probe" off the end.
+* The source "Website" column is absent from most city files, so the single
+  "Website" column they do have is the link the validator captured, not the
+  discovery source's own site.
 """
 
 from __future__ import annotations
@@ -139,6 +147,18 @@ def normalise_link(value: Any) -> str | None:
     return text
 
 
+def _as_link(value: Any) -> str | None:
+    """The value only if it is unmistakably a web address.
+
+    Used on the Yes/No columns, where anything else - "no", a service list, a
+    phone number - is not a link and must not be read as one.
+    """
+    text = str(value or "").strip()
+    if text.lower().startswith(("http://", "https://", "www.")):
+        return normalise_link(text)
+    return None
+
+
 def compute_status(record: ValidationRecord) -> str:
     answered = sum(1 for key in CHECK_KEYS if getattr(record, key) in {"YES", "NO"})
     if answered == 0:
@@ -169,6 +189,41 @@ def _int(value: Any) -> int | None:
 
 def _norm(header: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(header or "").strip().lower()).strip("_")
+
+
+def _reads_as_note(text: str) -> bool:
+    """A sentence in a short-value column, such as a reason written under Province."""
+    return len(text.split()) >= 5
+
+
+# The first of the presence checks. Anything to the right of it was filled in by
+# a validator rather than by discovery.
+CHECK_BLOCK_START = ("Google maps", "Google strret view", "Google street view", "GSV link")
+
+# How the discovery engine describes the way a place was found. Used to locate
+# the evidence block in a file that carries a spare column in front of it.
+EVIDENCE_METHODS = {"PROBE", "AREA_COVERAGE", "AREA_SWEEP", "COMPARISON", "NOT_PROBED"}
+
+
+def _evidence_offset(row: tuple[Any, ...], columns: Columns) -> int:
+    """How far the evidence block sits from where the header says it does.
+
+    The Medan workbook carries a blank column before Evidence Method, so every
+    value from there to Evidence Reason reads one column late. Finding the
+    method token keeps the whole block readable whichever layout a file uses.
+    Only a later position is considered: a block that appears to sit earlier
+    means the header does not describe this row at all, which is the shifted
+    row shape and is handled separately.
+    """
+    base = columns.index("Evidence Method")
+    if base is None:
+        return 0
+    for offset in (0, 1):
+        position = base + offset
+        value = row[position] if position < len(row) else None
+        if str(value or "").strip().upper() in EVIDENCE_METHODS:
+            return offset
+    return 0
 
 
 # The layout of the workbook that shipped with the demo. Used when a caller
@@ -217,16 +272,10 @@ class Columns:
                 return position
         return None
 
-    def nth(self, name: str, occurrence: int) -> int | None:
-        """Position of the Nth column with this header, for duplicated names."""
+    def positions(self, name: str) -> list[int]:
+        """Every position carrying this header, for duplicated names."""
         key = _norm(name)
-        seen = 0
-        for position, header in enumerate(self._header):
-            if _norm(header) == key:
-                seen += 1
-                if seen == occurrence:
-                    return position
-        return None
+        return [position for position, header in enumerate(self._header) if _norm(header) == key]
 
     def get(self, row: tuple[Any, ...], *names: str) -> Any:
         position = self.index(*names)
@@ -253,38 +302,75 @@ def parse_row(row: tuple[Any, ...], columns: Columns | None = None) -> dict[str,
 
     # Probed rows carry a real latitude in the Latitude column; unprobed rows
     # carry the evidence reason there because their columns are shifted left.
+    # A spreadsheet error such as #VALUE! is a broken coordinate on an otherwise
+    # well-formed row, so it must not be read as the shifted layout.
     latitude_at = columns.index("Latitude")
     latitude_at = 7 if latitude_at is None else latitude_at
-    aligned = _number(cell(latitude_at)) is not None
+    raw_latitude = cell(latitude_at)
+    aligned = _number(raw_latitude) is not None or str(raw_latitude or "").startswith("#")
+
+    # A workbook with no source Website column still has the validator's own
+    # Website link, sitting after the presence checks begin.
+    checks_at = columns.index(*CHECK_BLOCK_START)
+    website_columns = columns.positions("Website")
+    source_website_at = next(
+        (p for p in website_columns if checks_at is None or p < checks_at), None
+    )
+    website_link_at = next(
+        (p for p in website_columns if checks_at is not None and p > checks_at), None
+    )
 
     if aligned:
+        offset = _evidence_offset(row, columns)
+
         # Discovery columns describe how a place was found, so a "yes"/"no"
         # placeholder in them is read as "not stated".
         def evidence(*names: str) -> Any:
             value = columns.get(row, *names)
             return None if _is_placeholder(value) else value
 
+        def probe(name: str) -> Any:
+            """An evidence column, honouring a blank column inserted before it."""
+            position = columns.index(name)
+            if position is None:
+                return None
+            if offset and name == "Found By Probe":
+                # The inserted column pushes the block right and this last value
+                # off the end of it; the next cell belongs to the checks.
+                return None
+            value = columns.get_at(row, position + offset)
+            return None if _is_placeholder(value) else value
+
+        province = _text(evidence("Province"))
+        reason = _text(probe("Evidence Reason"))
+        if province and _reads_as_note(province):
+            # Unprobed rows in some files carry the evidence note under Province.
+            province, reason = None, reason or province
+
         parsed = {
             "categories": _text(evidence("Categories")),
             "address": _text(evidence("Address")),
             "city": _text(evidence("City")),
-            "province": _text(evidence("Province")),
+            "province": province,
             "latitude": _number(evidence("Latitude")),
             "longitude": _number(evidence("Longitude")),
             # Left unstated here; the caller keeps any method already known and
             # otherwise settles on NOT_PROBED.
-            "evidence_method": _text(evidence("Evidence Method")),
-            "evidence_strength": _text(evidence("Evidence Strength")),
-            "probe_query": _text(evidence("Probe Query")),
-            "result_count": _int(evidence("Result Count")),
-            "best_score": _number(evidence("Best Score")),
-            "evidence_timestamp": _text(evidence("Evidence Timestamp")),
-            "evidence_reason": _text(evidence("Evidence Reason")),
-            "found_by_probe": _text(evidence("Found By Probe")),
+            "evidence_method": _text(probe("Evidence Method")),
+            "evidence_strength": _text(probe("Evidence Strength")),
+            "probe_query": _text(probe("Probe Query")),
+            "result_count": _int(probe("Result Count")),
+            "best_score": _number(probe("Best Score")),
+            "evidence_timestamp": _text(probe("Evidence Timestamp")),
+            "evidence_reason": reason,
+            "found_by_probe": _text(probe("Found By Probe")),
             # Phone and status are recorded by the validator, where "no" means
             # none was found.
             "phone": _text(evidence("Phone")),
-            "website": _text(evidence("Website")),
+            "website": _text(
+                None if _is_placeholder(columns.get_at(row, source_website_at))
+                else columns.get_at(row, source_website_at)
+            ),
             "business_status": _text(evidence("Business Status")),
         }
     else:
@@ -308,30 +394,32 @@ def parse_row(row: tuple[Any, ...], columns: Columns | None = None) -> dict[str,
             "business_status": _text(cell(11)),
         }
 
-    # The validation columns sit after the discovery block. "Website" appears
-    # twice in some workbooks - the second one is the validation-layer link.
-    website_link_at = columns.nth("Website", 2)
+    # Presence checks, and the link a validator sometimes pastes into the
+    # Yes/No column instead of answering it. A link is an answer of Yes.
+    for field in CHECK_FIELDS:
+        raw = columns.get(row, field["column"], field["label"])
+        link = _as_link(raw)
+        parsed[field["key"]] = "YES" if link else normalise_check(raw)
+        parsed[field["link_key"]] = link
+
+    # Street View has a link column of its own, which wins over the check cell.
+    gsv = normalise_link(columns.get(row, "GSV link"))
+    if gsv:
+        parsed["gsv_link"] = gsv
+        parsed["google_street_view"] = parsed["google_street_view"] or ("YES" if gsv != "Yes" else None)
+
     parsed.update(
         {
             "provider": _text(cell(0)),
             "provider_place_id": _text(cell(1)),
             "business_name": _text(cell(2)),
             # Validation layer values already present in the workbook.
-            "google_maps": normalise_check(columns.get(row, "Google maps")),
-            "google_street_view": normalise_check(columns.get(row, "Google strret view", "Google street view")),
-            "gsv_link": normalise_link(columns.get(row, "GSV link")),
             "website_link": normalise_link(columns.get_at(row, website_link_at)),
             "services": None if _is_placeholder(columns.get(row, "services")) else _text(columns.get(row, "services")),
             "facebook": normalise_link(columns.get(row, "FB", "Facebook")),
             "instagram": normalise_link(columns.get(row, "Insta", "Instagram")),
             "tiktok": normalise_link(columns.get(row, "TikTok")),
             "whatsapp": normalise_link(columns.get(row, "whats app", "whatsapp")),
-            "yellow_pages_indonesia": normalise_check(columns.get(row, "Yellow Pages Indonesia")),
-            "search_yellow_directory": normalise_check(columns.get(row, "Search Yellow Directory")),
-            "indonesia_yp": normalise_check(
-                columns.get(row, "IndonesiaYP (Indonesia Business Directory)", "IndonesiaYP")
-            ),
-            "fresha": normalise_check(columns.get(row, "Fresha")),
             "identified_contact_number": (
                 None
                 if _is_placeholder(columns.get(row, "Identified Contact Number"))
@@ -455,6 +543,24 @@ def append_rows(
 # The workbook that shipped with the demo has no city in its name.
 BUNDLED_WORKBOOK = "Ssample-2.xlsx"
 
+# Trailing words in a file name that describe the file, not the city.
+FILE_DESCRIPTOR_WORDS = {
+    "final", "finals", "data", "dataset", "validation", "validated", "missed",
+    "misseddata", "missing", "layer", "sheet", "workbook", "export", "updated",
+    "update", "new", "latest", "copy", "core", "v1", "v2", "v3", "v4",
+}
+
+# The provinces of the cities in the programme, so a city is complete from its
+# validation workbook alone. A benchmark export states its own province and
+# takes precedence when one is loaded.
+KNOWN_REGIONS = {
+    "denpasar": "Bali",
+    "jakarta": "DKI Jakarta",
+    "surabaya": "Jawa Timur",
+    "bandung": "Jawa Barat",
+    "medan": "Sumatera Utara",
+}
+
 
 def find_workbooks() -> list[Path]:
     if not WORKBOOK_DIR.is_dir():
@@ -473,13 +579,23 @@ def find_workbook() -> Path | None:
 def city_for_workbook(path: Path) -> tuple[str, str | None]:
     """Which city a validation workbook belongs to, from its file name.
 
-    "Jakarta_data.xlsx" -> Jakarta. The bundled demo file and its revisions
-    ("Ssample-2_8992.xlsx") have no city in the name and describe Denpasar.
+    "Jakarta_data.xlsx", "Medan Final.xlsx" and "BANDUNG Final.xlsx" all name
+    their city first and then describe the file, so the trailing words and any
+    date or version number are dropped and the name is cased for display. The
+    bundled demo file and its revisions ("Ssample-2_8992.xlsx") have no city in
+    the name and describe Denpasar.
     """
     if path.stem.lower().startswith("ssample"):
         return DEFAULT_CITY["name"], DEFAULT_CITY["region"]
-    stem = re.split(r"[_\-]", path.stem)[0].strip()
-    return (stem or DEFAULT_CITY["name"]), None
+
+    tokens = [token for token in re.split(r"[\s_\-]+", path.stem) if token]
+    while len(tokens) > 1 and (tokens[-1].lower() in FILE_DESCRIPTOR_WORDS or tokens[-1].isdigit()):
+        tokens.pop()
+    name = " ".join(tokens).strip() or DEFAULT_CITY["name"]
+    # "BANDUNG" and "surabaya" are the same city as "Bandung"; present one name.
+    if name.isupper() or name.islower():
+        name = name.title()
+    return name, KNOWN_REGIONS.get(slugify(name))
 
 
 def replace_rows(

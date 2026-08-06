@@ -157,6 +157,124 @@ def test_presence_without_a_link_is_kept_as_text():
     assert normalise_link("https://www.google.com/maps/place/x") == "https://www.google.com/maps/place/x"
 
 
+# --- City files name their city first, then describe themselves -------------
+
+def test_city_is_read_from_the_file_name():
+    from pathlib import Path
+
+    from app.services.validation_layer import city_for_workbook
+
+    assert city_for_workbook(Path("Jakarta_data.xlsx")) == ("Jakarta", "DKI Jakarta")
+    assert city_for_workbook(Path("Medan Final.xlsx")) == ("Medan", "Sumatera Utara")
+    assert city_for_workbook(Path("Surabaya final.xlsx")) == ("Surabaya", "Jawa Timur")
+    # A shouted name is the same city as a written one, and is shown as one.
+    assert city_for_workbook(Path("BANDUNG Final.xlsx")) == ("Bandung", "Jawa Barat")
+    assert city_for_workbook(Path("Denpasar.xlsx")) == ("Denpasar", "Bali")
+    # The bundled demo file names no city.
+    assert city_for_workbook(Path("Ssample-2_8992.xlsx")) == ("Denpasar", "Bali")
+    # A city outside the programme is still read, without a province.
+    assert city_for_workbook(Path("Semarang_20260805.xlsx")) == ("Semarang", None)
+
+
+# --- A spare column in front of the evidence block --------------------------
+
+MEDAN_HEADER = JAKARTA_HEADER
+
+# Every value from Evidence Method to Evidence Reason reads one column late,
+# and "Found By Probe" falls off the end of the block.
+MEDAN_ROW = (
+    "GRAB", "AQ7", "Aciek Spa Sekip", "day spa", "Jl. Waringin, Sekip", "Sumatera Utara",
+    None, "3.596410001", "98.66767", "NO", "NO", None, "PROBE", "STRONG - live lookup",
+    "Aciek Spa Sekip Jl. Waringin", "5", "27.14", "2026-08-05T10:44:45.870171",
+    "Probe returned 5 result(s)", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO",
+    "NO", "NO", "NO",
+)
+
+
+def test_an_inserted_column_does_not_shift_the_evidence_block_out_of_reach():
+    row = parse_row(MEDAN_ROW, Columns(MEDAN_HEADER))
+    assert row["evidence_method"] == "PROBE"
+    assert row["evidence_strength"].startswith("STRONG")
+    assert row["probe_query"].startswith("Aciek Spa Sekip")
+    assert row["result_count"] == 5
+    assert row["best_score"] == 27.14
+    assert row["evidence_reason"].startswith("Probe returned")
+    # Its value was pushed off the block; the next cell is a presence check.
+    assert row["found_by_probe"] is None
+    assert row["google_maps"] == "NO"
+    # The business itself is unaffected.
+    assert row["business_name"] == "Aciek Spa Sekip"
+    assert row["latitude"] == 3.596410001
+
+
+# --- Values a validator wrote where the template did not expect them --------
+
+def test_a_link_in_a_yes_no_column_is_an_answer_of_yes():
+    header = JAKARTA_HEADER
+    row = (
+        "GOOGLE", "ChIJ5", "82 BarbershopBALI", None, "Jl. Kertapura", "Bali", None,
+        "-8.6822411", "115.1928226", None, None, None, None, None, None, None, None,
+        None, None, "https://maps.app.goo.gl/qkGsJbbYut9fiMKJ9", None, None, None,
+        None, None, None, None, None, None, None, None, None,
+    )
+    parsed = parse_row(row, Columns(header))
+    assert parsed["google_maps"] == "YES"
+    assert parsed["google_maps_link"] == "https://maps.app.goo.gl/qkGsJbbYut9fiMKJ9"
+
+
+def test_service_text_in_a_yes_no_column_is_not_a_link():
+    header = ("Provider", "Provider Place ID", "Business Name", "Google maps")
+    parsed = parse_row(("GRAB", "AQ8", "Acin Salon", "haircuts, hairstyling"), Columns(header))
+    assert parsed["google_maps"] is None
+    assert parsed["google_maps_link"] is None
+
+
+def test_the_only_website_column_belongs_to_the_validator():
+    """With no source Website column, the one present is the link they captured."""
+    header = JAKARTA_HEADER            # Website sits after the presence checks
+    row = list((None,) * len(header))
+    row[0], row[2] = "GRAB", "Lisvia Beauty"
+    row[7], row[8] = "3.58", "98.67"
+    row[header.index("Website")] = "https://lisviabeauty.com/"
+    parsed = parse_row(tuple(row), Columns(header))
+    assert parsed["website_link"] == "https://lisviabeauty.com/"
+    assert parsed["website"] is None   # nothing claimed as discovery evidence
+
+
+def test_a_broken_coordinate_does_not_look_like_the_shifted_layout():
+    header = JAKARTA_HEADER
+    row = list((None,) * len(header))
+    row[0], row[2] = "GOOGLE", "NAGI Barbershop"
+    row[4], row[5] = "Jl. KH. Ahmad Dahlan", "Kota Jakarta Selatan"
+    row[7], row[8] = "#VALUE!", "106.7915706"
+    row[9], row[10] = "6289696109693", "Closed"
+    parsed = parse_row(tuple(row), Columns(header))
+    assert parsed["latitude"] is None
+    assert parsed["longitude"] == 106.7915706
+    assert parsed["address"] == "Jl. KH. Ahmad Dahlan"
+    assert parsed["business_status"] == "Closed"
+
+
+def test_a_note_written_under_province_is_read_as_the_evidence_reason():
+    header = JAKARTA_HEADER
+    row = list((None,) * len(header))
+    row[0], row[2] = "GOOGLE", "82 BarbershopBALI"
+    row[6] = "Not yet probed in the opposite provider"
+    row[7], row[8] = "-8.68", "115.19"
+    parsed = parse_row(tuple(row), Columns(header))
+    assert parsed["province"] is None
+    assert parsed["evidence_reason"] == "Not yet probed in the opposite provider"
+
+
+def test_a_real_province_is_kept():
+    header = JAKARTA_HEADER
+    row = list((None,) * len(header))
+    row[0], row[2] = "GRAB", "Salon Yogya"
+    row[6] = "Daerah Istimewa Yogyakarta"
+    row[7], row[8] = "-7.79", "110.36"
+    assert parse_row(tuple(row), Columns(header))["province"] == "Daerah Istimewa Yogyakarta"
+
+
 def test_a_revision_replaces_a_city_but_keeps_known_evidence(db):
     """Dropping in a revised workbook updates the city instead of merging."""
     from app.services.validation_layer import replace_rows
